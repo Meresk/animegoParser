@@ -5,7 +5,9 @@ import (
 	"fmt"
 	"github.com/PuerkitoBio/goquery"
 	"github.com/playwright-community/playwright-go"
+	"github.com/xuri/excelize/v2"
 	"log"
+	"os"
 	"strings"
 	"time"
 )
@@ -24,6 +26,7 @@ func main() {
 
 	user := flag.String("user", "", "animego user name")
 	listType := flag.String("type", "all", "animego list type")
+	outputFormat := flag.String("output", "excel", "output format (excel/txt)")
 	flag.Parse()
 
 	if len(*user) == 0 {
@@ -32,6 +35,9 @@ func main() {
 	if !allowedListTypes[*listType] {
 		log.Println("list type is invalid, it will be all")
 		*listType = "all"
+	}
+	if outputFormat == nil || *outputFormat != "excel" && *outputFormat != "txt" {
+		log.Println("output format is invalid, it will be excel")
 	}
 
 	var url string
@@ -106,24 +112,68 @@ func main() {
 		log.Fatalf("could not parse page content: %v", err)
 	}
 
-	// Находим строки с данными
-	doc.Find("table tr").Each(func(i int, s *goquery.Selection) {
-		fmt.Println("-----------------------------")
-		s.Find("td[class=\"text-left table-100\"]").Each(func(i int, s *goquery.Selection) {
-			// Извлекаем текст из <div>
-			s.Find("div").Each(func(i int, s *goquery.Selection) {
-				fmt.Println(strings.TrimSpace(s.Text()))
+	switch *outputFormat {
+	case "txt":
+		file, err := os.Create(*listType + "_anime_list.txt")
+		if err != nil {
+			log.Fatalf("could not create file: %v", err)
+		}
+		defer file.Close()
+
+		doc.Find("table tr").Each(func(i int, s *goquery.Selection) {
+			s.Find("td[class=\"text-left table-100\"]").Each(func(i int, s *goquery.Selection) {
+				s.Find("div[class=\"text-gray-dark-6 small\"]").Each(func(i int, s *goquery.Selection) {
+					file.WriteString("Оригинальное название: " + strings.TrimSpace(s.Text()) + "\n")
+				})
+				s.Find("a").Each(func(i int, s *goquery.Selection) {
+					file.WriteString("Русское название: " + strings.TrimSpace(s.Text()) + "\n")
+				})
 			})
-			// Извлекаем текст из <a>
-			s.Find("a").Each(func(i int, s *goquery.Selection) {
-				fmt.Println(strings.TrimSpace(s.Text()))
+
+			s.Find("td[data-label=\"Тип\"]").Each(func(i int, s *goquery.Selection) {
+				file.WriteString("Тип: " + strings.TrimSpace(s.Text()) + "\n\n")
 			})
+		})
+		log.Println(fmt.Sprintf("Your data in %s_anime_list.txt!", *listType))
+
+	case "excel":
+		// Запись в Excel
+		file := excelize.NewFile()
+
+		// Добавление заголовков в Excel
+		sheet := "Sheet1"
+		file.NewSheet(sheet)
+		file.SetCellValue(sheet, "A1", "Anime Name")
+		file.SetCellValue(sheet, "B1", "Type")
+
+		row := 2
+		doc.Find("table tr").Each(func(i int, s *goquery.Selection) {
+			// Извлекаем данные и записываем в Excel
+			s.Find("td[class=\"text-left table-100\"]").Each(func(i int, s *goquery.Selection) {
+				// Извлекаем текст из <div>
+				s.Find("div").Each(func(i int, s *goquery.Selection) {
+					file.SetCellValue(sheet, fmt.Sprintf("A%d", row), strings.TrimSpace(s.Text()))
+				})
+				// Извлекаем текст из <a>
+				s.Find("a").Each(func(i int, s *goquery.Selection) {
+					file.SetCellValue(sheet, fmt.Sprintf("A%d", row), strings.TrimSpace(s.Text()))
+				})
+			})
+
+			s.Find("td[data-label=\"Тип\"]").Each(func(i int, s *goquery.Selection) {
+				file.SetCellValue(sheet, fmt.Sprintf("B%d", row), strings.TrimSpace(s.Text()))
+			})
+			row++
 		})
 
-		s.Find("td[data-label=\"Тип\"]").Each(func(i int, s *goquery.Selection) {
-			fmt.Println(strings.TrimSpace(s.Text()))
-		})
-	})
+		if err := file.SaveAs(*listType + "_anime_list.xlsx"); err != nil {
+			log.Fatalf("could not save excel file: %v", err)
+		}
+		log.Println(fmt.Sprintf("Your data in %s_anime_list.xlsx!", *listType))
+
+	default:
+		log.Fatalf("Unsupported output format: %v", *outputFormat)
+	}
 
 	fmt.Println("Done.")
 }
